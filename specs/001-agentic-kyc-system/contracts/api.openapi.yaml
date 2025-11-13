@@ -1,0 +1,1992 @@
+openapi: 3.0.3
+info:
+  title: KYC Agent System API
+  description: |
+    REST API for AI-powered agentic KYC system. Supports client onboarding, document management, 
+    automated screening, risk assessment, source of wealth review, and human-in-the-loop approvals.
+  version: 1.0.0
+  contact:
+    name: KYC Platform Team
+    email: kyc-platform@bank.com
+
+servers:
+  - url: https://api.kyc-dev.bank.com/v1
+    description: Development environment
+  - url: https://api.kyc-staging.bank.com/v1
+    description: Staging environment
+  - url: https://api.kyc.bank.com/v1
+    description: Production environment
+
+tags:
+  - name: Authentication
+    description: User authentication and token management
+  - name: Cases
+    description: KYC case management
+  - name: Clients
+    description: Client profile management
+  - name: Documents
+    description: Document upload and processing
+  - name: Screening
+    description: Sanctions, PEP, and adverse media screening
+  - name: Risk Assessment
+    description: AI-powered risk scoring
+  - name: Source of Wealth
+    description: Source of wealth review
+  - name: Relationships
+    description: Entity relationship mapping
+  - name: Approvals
+    description: Human review and approval workflows
+  - name: Audit
+    description: Audit trail and event history
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ============================================================================
+  # AUTHENTICATION
+  # ============================================================================
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: Authenticate user with username/password, returns JWT tokens
+      operationId: login
+      security: []  # No auth required for login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 50
+                  example: john.doe
+                password:
+                  type: string
+                  minLength: 12
+                  example: SecurePassword123!
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: JWT access token (expires in 1 hour)
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  refresh_token:
+                    type: string
+                    description: JWT refresh token (expires in 7 days)
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    description: Access token expiry in seconds
+                    example: 3600
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token
+      description: Exchange refresh token for new access token
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 3600
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: User logout
+      description: Invalidate current refresh token
+      operationId: logout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '204':
+          description: Logout successful
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================================================
+  # CASES
+  # ============================================================================
+  /cases:
+    get:
+      tags: [Cases]
+      summary: List cases
+      description: Retrieve paginated list of KYC cases with optional filters
+      operationId: listCases
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: status
+          in: query
+          description: Filter by case status
+          schema:
+            type: string
+            enum: [OPEN, UNDER_REVIEW, EDD_REQUIRED, APPROVED, REJECTED, CLOSED]
+        - name: assigned_officer_id
+          in: query
+          description: Filter by assigned officer
+          schema:
+            type: string
+            format: uuid
+        - name: priority
+          in: query
+          description: Filter by priority
+          schema:
+            type: string
+            enum: [LOW, NORMAL, HIGH, URGENT]
+        - name: risk_level
+          in: query
+          description: Filter by risk level
+          schema:
+            type: string
+            enum: [LOW, MEDIUM, HIGH]
+        - name: sort_by
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [opened_at, due_date, updated_at]
+            default: opened_at
+        - name: sort_order
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Cases retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CaseSummary'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Cases]
+      summary: Create new case
+      description: Initiate new KYC review case for a client
+      operationId: createCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_id, priority]
+              properties:
+                client_id:
+                  type: string
+                  format: uuid
+                  description: Existing client ID, or null if creating new client inline
+                client_data:
+                  $ref: '#/components/schemas/ClientCreate'
+                  description: Required if client_id is null
+                priority:
+                  type: string
+                  enum: [LOW, NORMAL, HIGH, URGENT]
+                  default: NORMAL
+                due_date:
+                  type: string
+                  format: date
+                  description: Override default due date calculation
+                notes:
+                  type: string
+                  description: Initial case notes
+      responses:
+        '201':
+          description: Case created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /cases/{case_id}:
+    get:
+      tags: [Cases]
+      summary: Get case details
+      description: Retrieve complete case information including client, documents, screening, risk assessment
+      operationId: getCase
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      responses:
+        '200':
+          description: Case retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Cases]
+      summary: Update case
+      description: Update case metadata (status, priority, assignment)
+      operationId: updateCase
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [OPEN, UNDER_REVIEW, EDD_REQUIRED, APPROVED, REJECTED, CLOSED]
+                assigned_officer_id:
+                  type: string
+                  format: uuid
+                assigned_reviewer_id:
+                  type: string
+                  format: uuid
+                priority:
+                  type: string
+                  enum: [LOW, NORMAL, HIGH, URGENT]
+                due_date:
+                  type: string
+                  format: date
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Case updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /cases/{case_id}/transition:
+    post:
+      tags: [Cases]
+      summary: Transition case status
+      description: Move case to next workflow state with validation
+      operationId: transitionCase
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_status]
+              properties:
+                target_status:
+                  type: string
+                  enum: [UNDER_REVIEW, EDD_REQUIRED, APPROVED, REJECTED, CLOSED]
+                reason:
+                  type: string
+                  description: Rationale for transition (required for REJECTED, CLOSED)
+                assigned_reviewer_id:
+                  type: string
+                  format: uuid
+                  description: Required when transitioning to UNDER_REVIEW
+      responses:
+        '200':
+          description: Status transition successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ============================================================================
+  # CLIENTS
+  # ============================================================================
+  /clients:
+    get:
+      tags: [Clients]
+      summary: List clients
+      description: Retrieve paginated list of clients with search
+      operationId: listClients
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: search
+          in: query
+          description: Search by name, email, or identifiers
+          schema:
+            type: string
+        - name: client_type
+          in: query
+          description: Filter by client type
+          schema:
+            type: string
+            enum: [INDIVIDUAL, ENTITY]
+        - name: is_pep
+          in: query
+          description: Filter PEP clients
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Clients retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClientSummary'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Clients]
+      summary: Create client
+      description: Register new client (individual or entity)
+      operationId: createClient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientCreate'
+      responses:
+        '201':
+          description: Client created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /clients/{client_id}:
+    get:
+      tags: [Clients]
+      summary: Get client details
+      description: Retrieve complete client profile
+      operationId: getClient
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Client retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Clients]
+      summary: Update client
+      description: Update client profile information
+      operationId: updateClient
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientUpdate'
+      responses:
+        '200':
+          description: Client updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /clients/{client_id}/relationships:
+    get:
+      tags: [Relationships]
+      summary: Get client relationships
+      description: Retrieve entity relationship graph (beneficial owners, directors, etc.)
+      operationId: getClientRelationships
+      parameters:
+        - name: client_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: depth
+          in: query
+          description: Maximum relationship depth to traverse
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 3
+      responses:
+        '200':
+          description: Relationships retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RelationshipNode'
+                  edges:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RelationshipEdge'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # DOCUMENTS
+  # ============================================================================
+  /cases/{case_id}/documents:
+    get:
+      tags: [Documents]
+      summary: List case documents
+      description: Retrieve all documents for a case
+      operationId: listCaseDocuments
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+        - name: document_type
+          in: query
+          description: Filter by document type
+          schema:
+            type: string
+            enum: [passport, driver_license, utility_bill, bank_statement, incorporation_certificate, shareholder_register, other]
+      responses:
+        '200':
+          description: Documents retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DocumentMetadata'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Documents]
+      summary: Upload document
+      description: Upload document file with automatic OCR and extraction
+      operationId: uploadDocument
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, document_type]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Document file (PDF, PNG, JPEG)
+                document_type:
+                  type: string
+                  enum: [passport, driver_license, utility_bill, bank_statement, incorporation_certificate, shareholder_register, other]
+                description:
+                  type: string
+                  description: Optional document description
+      responses:
+        '201':
+          description: Document uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: File too large (max 50MB)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /documents/{document_id}:
+    get:
+      tags: [Documents]
+      summary: Get document metadata
+      description: Retrieve document metadata including extracted text
+      operationId: getDocument
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document metadata retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentMetadata'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Documents]
+      summary: Delete document
+      description: Soft delete document (file remains in S3 with versioning)
+      operationId: deleteDocument
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Document deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /documents/{document_id}/download:
+    get:
+      tags: [Documents]
+      summary: Download document file
+      description: Generate pre-signed S3 URL for secure file download
+      operationId: downloadDocument
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Pre-signed URL generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  download_url:
+                    type: string
+                    format: uri
+                    description: Pre-signed S3 URL (expires in 5 minutes)
+                    example: https://kyc-documents-dev.s3.amazonaws.com/...?X-Amz-Signature=...
+                  expires_at:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # SCREENING
+  # ============================================================================
+  /cases/{case_id}/screening:
+    post:
+      tags: [Screening]
+      summary: Execute screening
+      description: Run sanctions, PEP, and adverse media screening for case client
+      operationId: executeScreening
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [screening_types]
+              properties:
+                screening_types:
+                  type: array
+                  items:
+                    type: string
+                    enum: [SANCTIONS, PEP, ADVERSE_MEDIA]
+                  minItems: 1
+                provider:
+                  type: string
+                  enum: [dow_jones, world_check, comply_advantage]
+                  default: world_check
+      responses:
+        '201':
+          description: Screening initiated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  screening_ids:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+                  status:
+                    type: string
+                    example: PROCESSING
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /screening/{screening_id}:
+    get:
+      tags: [Screening]
+      summary: Get screening results
+      description: Retrieve screening results with match details
+      operationId: getScreeningResults
+      parameters:
+        - name: screening_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Screening results retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreeningResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /screening/{screening_id}/review:
+    patch:
+      tags: [Screening]
+      summary: Review screening match
+      description: Mark screening match as confirmed, false positive, or needs investigation
+      operationId: reviewScreening
+      parameters:
+        - name: screening_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [review_status]
+              properties:
+                review_status:
+                  type: string
+                  enum: [CONFIRMED, FALSE_POSITIVE, NEEDS_INVESTIGATION]
+                review_notes:
+                  type: string
+                  description: Reviewer's notes (required for CONFIRMED and NEEDS_INVESTIGATION)
+      responses:
+        '200':
+          description: Screening review recorded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreeningResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ============================================================================
+  # RISK ASSESSMENT
+  # ============================================================================
+  /cases/{case_id}/risk-assessment:
+    get:
+      tags: [Risk Assessment]
+      summary: Get risk assessment
+      description: Retrieve current risk assessment for case
+      operationId: getRiskAssessment
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      responses:
+        '200':
+          description: Risk assessment retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskAssessment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Risk Assessment]
+      summary: Compute risk assessment
+      description: Trigger AI-powered risk scoring
+      operationId: computeRiskAssessment
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      responses:
+        '201':
+          description: Risk assessment computed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskAssessment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /cases/{case_id}/risk-assessment/override:
+    post:
+      tags: [Risk Assessment]
+      summary: Override risk score
+      description: Manually override AI-computed risk score (requires elevated permissions)
+      operationId: overrideRiskScore
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [override_score, override_reason]
+              properties:
+                override_score:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                override_reason:
+                  type: string
+                  minLength: 20
+                  description: Detailed justification for override
+      responses:
+        '200':
+          description: Risk override applied successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskAssessment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ============================================================================
+  # SOURCE OF WEALTH
+  # ============================================================================
+  /cases/{case_id}/source-of-wealth:
+    get:
+      tags: [Source of Wealth]
+      summary: Get SOW review
+      description: Retrieve source of wealth analysis
+      operationId: getSourceOfWealthReview
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      responses:
+        '200':
+          description: SOW review retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceOfWealthReview'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Source of Wealth]
+      summary: Generate SOW review
+      description: Trigger AI-powered source of wealth analysis
+      operationId: generateSourceOfWealthReview
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [claimed_sources]
+              properties:
+                claimed_sources:
+                  type: array
+                  items:
+                    type: string
+                  example: ["Inheritance", "Sale of business", "Investment income"]
+                claimed_amount_usd:
+                  type: number
+                  format: decimal
+                  example: 5000000.00
+      responses:
+        '201':
+          description: SOW review generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceOfWealthReview'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ============================================================================
+  # APPROVALS
+  # ============================================================================
+  /cases/{case_id}/approve:
+    post:
+      tags: [Approvals]
+      summary: Approve case
+      description: Approve case after human review (creates immutable snapshot)
+      operationId: approveCase
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision_rationale]
+              properties:
+                decision_rationale:
+                  type: string
+                  minLength: 50
+                  description: Detailed explanation for approval decision
+                conditions:
+                  type: array
+                  items:
+                    type: string
+                  description: Any conditions attached to approval
+      responses:
+        '200':
+          description: Case approved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  case:
+                    $ref: '#/components/schemas/CaseDetail'
+                  snapshot_id:
+                    type: string
+                    format: uuid
+                    description: ID of immutable approval snapshot
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /cases/{case_id}/reject:
+    post:
+      tags: [Approvals]
+      summary: Reject case
+      description: Reject case after human review (creates immutable snapshot)
+      operationId: rejectCase
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision_rationale, rejection_reasons]
+              properties:
+                decision_rationale:
+                  type: string
+                  minLength: 50
+                  description: Detailed explanation for rejection decision
+                rejection_reasons:
+                  type: array
+                  items:
+                    type: string
+                    enum: [INCOMPLETE_DOCUMENTATION, SCREENING_HIT, HIGH_RISK, UNCLEAR_SOW, POLICY_VIOLATION, OTHER]
+                  minItems: 1
+                additional_notes:
+                  type: string
+      responses:
+        '200':
+          description: Case rejected successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  case:
+                    $ref: '#/components/schemas/CaseDetail'
+                  snapshot_id:
+                    type: string
+                    format: uuid
+                    description: ID of immutable rejection snapshot
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ============================================================================
+  # AUDIT
+  # ============================================================================
+  /cases/{case_id}/audit-trail:
+    get:
+      tags: [Audit]
+      summary: Get case audit trail
+      description: Retrieve complete timeline of case events
+      operationId: getCaseAuditTrail
+      parameters:
+        - $ref: '#/components/parameters/CaseIdParam'
+        - name: event_type
+          in: query
+          description: Filter by event type
+          schema:
+            type: string
+        - name: actor_type
+          in: query
+          description: Filter by actor type
+          schema:
+            type: string
+            enum: [USER, SYSTEM, AGENT]
+        - name: start_date
+          in: query
+          description: Filter events after this date
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          description: Filter events before this date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Audit trail retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /snapshots/{snapshot_id}:
+    get:
+      tags: [Audit]
+      summary: Get approval snapshot
+      description: Retrieve immutable approval/rejection snapshot
+      operationId: getApprovalSnapshot
+      parameters:
+        - name: snapshot_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Snapshot retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalSnapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# ==============================================================================
+# COMPONENTS
+# ==============================================================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token (obtain via /auth/login)
+
+  parameters:
+    CaseIdParam:
+      name: case_id
+      in: path
+      required: true
+      description: Case UUID
+      schema:
+        type: string
+        format: uuid
+
+    PageParam:
+      name: page
+      in: query
+      description: Page number (1-indexed)
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    PageSizeParam:
+      name: page_size
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  schemas:
+    # ========================================================================
+    # USER & AUTH
+    # ========================================================================
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        is_active:
+          type: boolean
+        last_login_at:
+          type: string
+          format: date-time
+
+    Role:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          enum: [case_officer, senior_officer, manager, administrator]
+        description:
+          type: string
+        permissions:
+          type: object
+          additionalProperties: true
+
+    # ========================================================================
+    # CASES
+    # ========================================================================
+    CaseSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_number:
+          type: string
+          example: KYC-2025-001234
+        client:
+          $ref: '#/components/schemas/ClientSummary'
+        status:
+          type: string
+          enum: [OPEN, UNDER_REVIEW, EDD_REQUIRED, APPROVED, REJECTED, CLOSED]
+        priority:
+          type: string
+          enum: [LOW, NORMAL, HIGH, URGENT]
+        assigned_officer:
+          $ref: '#/components/schemas/User'
+        risk_level:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+        due_date:
+          type: string
+          format: date
+        opened_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CaseDetail:
+      allOf:
+        - $ref: '#/components/schemas/CaseSummary'
+        - type: object
+          properties:
+            client_details:
+              $ref: '#/components/schemas/ClientDetail'
+            assigned_reviewer:
+              $ref: '#/components/schemas/User'
+            documents:
+              type: array
+              items:
+                $ref: '#/components/schemas/DocumentMetadata'
+            screening_results:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScreeningResult'
+            risk_assessment:
+              $ref: '#/components/schemas/RiskAssessment'
+            sow_review:
+              $ref: '#/components/schemas/SourceOfWealthReview'
+            reviewed_at:
+              type: string
+              format: date-time
+            closed_at:
+              type: string
+              format: date-time
+            closure_reason:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+
+    # ========================================================================
+    # CLIENTS
+    # ========================================================================
+    ClientSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_type:
+          type: string
+          enum: [INDIVIDUAL, ENTITY]
+        legal_name:
+          type: string
+        is_pep:
+          type: boolean
+        is_high_net_worth:
+          type: boolean
+        nationality:
+          type: string
+
+    ClientDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_type:
+          type: string
+          enum: [INDIVIDUAL, ENTITY]
+        legal_name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        # Individual fields
+        first_name:
+          type: string
+        middle_name:
+          type: string
+        last_name:
+          type: string
+        date_of_birth:
+          type: string
+          format: date
+        place_of_birth:
+          type: string
+        gender:
+          type: string
+        nationality:
+          type: string
+        national_id:
+          type: string
+        passport_number:
+          type: string
+        passport_expiry:
+          type: string
+          format: date
+        tax_id:
+          type: string
+        # Entity fields
+        registration_number:
+          type: string
+        jurisdiction_of_incorporation:
+          type: string
+        date_of_incorporation:
+          type: string
+          format: date
+        entity_type:
+          type: string
+        business_activity:
+          type: string
+        # Contact
+        residential_address:
+          $ref: '#/components/schemas/Address'
+        registered_address:
+          $ref: '#/components/schemas/Address'
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        # Classification
+        is_pep:
+          type: boolean
+        pep_category:
+          type: string
+        is_high_net_worth:
+          type: boolean
+        estimated_net_worth_usd:
+          type: number
+          format: decimal
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ClientCreate:
+      type: object
+      required: [client_type, legal_name]
+      properties:
+        client_type:
+          type: string
+          enum: [INDIVIDUAL, ENTITY]
+        legal_name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        first_name:
+          type: string
+        middle_name:
+          type: string
+        last_name:
+          type: string
+        date_of_birth:
+          type: string
+          format: date
+        place_of_birth:
+          type: string
+        gender:
+          type: string
+        nationality:
+          type: string
+        national_id:
+          type: string
+        passport_number:
+          type: string
+        passport_expiry:
+          type: string
+          format: date
+        tax_id:
+          type: string
+        registration_number:
+          type: string
+        jurisdiction_of_incorporation:
+          type: string
+        date_of_incorporation:
+          type: string
+          format: date
+        entity_type:
+          type: string
+        business_activity:
+          type: string
+        residential_address:
+          $ref: '#/components/schemas/Address'
+        registered_address:
+          $ref: '#/components/schemas/Address'
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        is_high_net_worth:
+          type: boolean
+        estimated_net_worth_usd:
+          type: number
+          format: decimal
+
+    ClientUpdate:
+      type: object
+      properties:
+        legal_name:
+          type: string
+        aliases:
+          type: array
+          items:
+            type: string
+        residential_address:
+          $ref: '#/components/schemas/Address'
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+
+    Address:
+      type: object
+      properties:
+        line1:
+          type: string
+        line2:
+          type: string
+        city:
+          type: string
+        state_province:
+          type: string
+        postal_code:
+          type: string
+        country:
+          type: string
+
+    # ========================================================================
+    # RELATIONSHIPS
+    # ========================================================================
+    RelationshipNode:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_type:
+          type: string
+          enum: [INDIVIDUAL, ENTITY]
+        legal_name:
+          type: string
+        is_pep:
+          type: boolean
+
+    RelationshipEdge:
+      type: object
+      properties:
+        source_id:
+          type: string
+          format: uuid
+        target_id:
+          type: string
+          format: uuid
+        relationship_type:
+          type: string
+          enum: [OWNERSHIP, CONTROL, FAMILY, BUSINESS_ASSOCIATE]
+        ownership_percentage:
+          type: number
+          format: decimal
+        confidence_score:
+          type: number
+          format: decimal
+
+    # ========================================================================
+    # DOCUMENTS
+    # ========================================================================
+    DocumentMetadata:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        document_type:
+          type: string
+          enum: [passport, driver_license, utility_bill, bank_statement, incorporation_certificate, shareholder_register, other]
+        file_name:
+          type: string
+        file_size_bytes:
+          type: integer
+        mime_type:
+          type: string
+        extracted_text:
+          type: string
+        extraction_confidence:
+          type: number
+          format: decimal
+        extracted_entities:
+          type: object
+          additionalProperties: true
+        uploaded_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+
+    # ========================================================================
+    # SCREENING
+    # ========================================================================
+    ScreeningResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        screening_type:
+          type: string
+          enum: [SANCTIONS, PEP, ADVERSE_MEDIA]
+        provider:
+          type: string
+        search_query:
+          type: object
+          additionalProperties: true
+        search_timestamp:
+          type: string
+          format: date-time
+        match_status:
+          type: string
+          enum: [NO_HIT, HIT, POTENTIAL_MATCH]
+        match_count:
+          type: integer
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningMatch'
+        review_status:
+          type: string
+          enum: [PENDING, CONFIRMED, FALSE_POSITIVE, NEEDS_INVESTIGATION]
+        reviewed_at:
+          type: string
+          format: date-time
+        reviewed_by:
+          $ref: '#/components/schemas/User'
+        review_notes:
+          type: string
+
+    ScreeningMatch:
+      type: object
+      properties:
+        match_id:
+          type: string
+        name:
+          type: string
+        match_score:
+          type: number
+          format: decimal
+        category:
+          type: string
+        list:
+          type: string
+        date_added:
+          type: string
+          format: date
+        evidence_url:
+          type: string
+          format: uri
+        evidence_text:
+          type: string
+
+    # ========================================================================
+    # RISK ASSESSMENT
+    # ========================================================================
+    RiskAssessment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        risk_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        risk_level:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+        risk_drivers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskDriver'
+        rationale_text:
+          type: string
+        model_version:
+          type: string
+        confidence_score:
+          type: number
+          format: decimal
+        is_overridden:
+          type: boolean
+        override_score:
+          type: integer
+        override_level:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+        override_reason:
+          type: string
+        overridden_at:
+          type: string
+          format: date-time
+        overridden_by:
+          $ref: '#/components/schemas/User'
+        computed_at:
+          type: string
+          format: date-time
+
+    RiskDriver:
+      type: object
+      properties:
+        factor:
+          type: string
+        weight:
+          type: number
+          format: decimal
+        description:
+          type: string
+
+    # ========================================================================
+    # SOURCE OF WEALTH
+    # ========================================================================
+    SourceOfWealthReview:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        claimed_sources:
+          type: array
+          items:
+            type: string
+        claimed_amount_usd:
+          type: number
+          format: decimal
+        summary_text:
+          type: string
+        consistency_analysis:
+          type: string
+        identified_gaps:
+          type: array
+          items:
+            type: string
+        recommendations:
+          type: array
+          items:
+            type: string
+        referenced_documents:
+          type: array
+          items:
+            type: string
+            format: uuid
+        confidence_level:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+        confidence_score:
+          type: number
+          format: decimal
+        requires_further_review:
+          type: boolean
+        model_version:
+          type: string
+        reviewed_at:
+          type: string
+          format: date-time
+
+    # ========================================================================
+    # AUDIT
+    # ========================================================================
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        case_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        actor_type:
+          type: string
+          enum: [USER, SYSTEM, AGENT]
+        actor_id:
+          type: string
+          format: uuid
+        actor_name:
+          type: string
+        description:
+          type: string
+        before_value:
+          type: object
+          additionalProperties: true
+        after_value:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        event_timestamp:
+          type: string
+          format: date-time
+
+    ApprovalSnapshot:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        snapshot_type:
+          type: string
+          enum: [APPROVED, REJECTED]
+        approver:
+          $ref: '#/components/schemas/User'
+        approval_timestamp:
+          type: string
+          format: date-time
+        decision_rationale:
+          type: string
+        case_data:
+          type: object
+          additionalProperties: true
+        client_data:
+          type: object
+          additionalProperties: true
+        documents:
+          type: array
+          items:
+            type: object
+        screening_results:
+          type: array
+          items:
+            type: object
+        risk_assessment:
+          type: object
+        sow_review:
+          type: object
+        entity_relationships:
+          type: array
+          items:
+            type: object
+        agent_invocations:
+          type: array
+          items:
+            type: object
+        audit_trail:
+          type: array
+          items:
+            type: object
+        snapshot_hash:
+          type: string
+        s3_backup_key:
+          type: string
+
+    # ========================================================================
+    # PAGINATION
+    # ========================================================================
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total_items:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_prev:
+          type: boolean
+
+    # ========================================================================
+    # ERRORS
+    # ========================================================================
+    Error:
+      type: object
+      properties:
+        error_code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: Invalid request parameters
+        details:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Authentication required or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error_code: VALIDATION_ERROR
+            message: Request validation failed
+            details:
+              field_errors:
+                password:
+                  - Must be at least 12 characters
+                  - Must contain uppercase, lowercase, number, and special character
+            timestamp: '2025-11-12T10:00:00Z'
